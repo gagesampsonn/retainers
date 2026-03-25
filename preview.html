@@ -545,6 +545,7 @@ function App() {
       const data = loadUserData(lastUser);
       if (data) {
         setUser(lastUser);
+        setIsNewUser(!data.pin); // No PIN yet? Prompt to create one
         setScreen("pin");
         return;
       }
@@ -555,7 +556,8 @@ function App() {
   const handleUsernameSubmit = (username) => {
     setUser(username);
     const existing = loadUserData(username);
-    setIsNewUser(!existing);
+    // If no data or no PIN set yet, treat as new user (create PIN)
+    setIsNewUser(!existing || !existing.pin);
     setScreen("pin");
   };
 
@@ -563,6 +565,10 @@ function App() {
     let data = loadUserData(user);
     if (!data) {
       data = buildDefaultUserData(user, pin, CAMPAIGN_CONFIG);
+      saveUserData(user, data);
+    } else if (!data.pin) {
+      // Existing user without PIN — save their new PIN
+      data.pin = pin;
       saveUserData(user, data);
     }
     setLastUser(user);
