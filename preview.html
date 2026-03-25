@@ -364,38 +364,96 @@ function CampaignHeader({ config, userData, onSwitchUser }) {
 }
 
 // ============================================================
-// CALENDAR GRID
+// CALENDAR GRID — Real calendar with month headers
 // ============================================================
 function CalendarGrid({ config, userData, campaignDays, onToggleDay }) {
   const today = getTodayISO();
+  const campaignSet = new Set(campaignDays);
+
+  // Group campaign days by month, then build full calendar months
+  const months = useMemo(() => {
+    const result = [];
+    let currentMonth = null;
+
+    campaignDays.forEach((dateStr) => {
+      const date = parseDate(dateStr);
+      const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
+      if (!currentMonth || currentMonth.key !== monthKey) {
+        currentMonth = {
+          key: monthKey,
+          year: date.getFullYear(),
+          month: date.getMonth(),
+          label: date.toLocaleDateString("en-US", { month: "long", year: "numeric" }),
+        };
+        result.push(currentMonth);
+      }
+    });
+
+    return result;
+  }, [campaignDays]);
+
+  function buildMonthGrid(monthInfo) {
+    const { year, month } = monthInfo;
+    const firstDay = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const startDow = firstDay.getDay(); // 0=Sun
+
+    const blanks = Array.from({ length: startDow }, (_, i) => (<div key={"b-" + i} />));
+
+    const cells = Array.from({ length: daysInMonth }, (_, i) => {
+      const dayOfMonth = i + 1;
+      const date = new Date(year, month, dayOfMonth);
+      const dateStr = formatDateISO(date);
+      const inCampaign = campaignSet.has(dateStr);
+
+      if (!inCampaign) {
+        return (
+          <div key={dateStr} className="flex items-center justify-center min-h-[48px] aspect-square">
+            <span className="text-xs text-muted/30">{dayOfMonth}</span>
+          </div>
+        );
+      }
+
+      const dayData = userData.days[dateStr] || { posted: false, link: "" };
+      const isToday = dateStr === today;
+      const isPast = dateStr < today;
+      const isFuture = dateStr > today;
+      const isPosted = dayData.posted;
+
+      let bgClass = "bg-dark-bg border-dark-bg";
+      if (isPosted) bgClass = "bg-success/20 border-success";
+      else if (isPast) bgClass = "bg-dark-bg border-muted/30";
+      else if (isFuture) bgClass = "bg-dark-bg border-dark-card";
+
+      return (
+        <button key={dateStr} onClick={() => onToggleDay(dateStr)} disabled={isFuture}
+          className={`day-cell relative flex flex-col items-center justify-center rounded-xl border-2 min-h-[48px] min-w-[48px] aspect-square ${bgClass} ${isToday ? "border-accent pulse-today" : ""} ${isPosted ? "text-success" : isPast ? "text-muted" : "text-white"} ${isFuture ? "opacity-40 cursor-not-allowed" : "cursor-pointer hover:border-accent/50"}`}>
+          <span className="text-xs font-bold leading-none">{dayOfMonth}</span>
+          {isPosted && <span className="text-success text-[10px] leading-none mt-0.5">✓</span>}
+          {isToday && !isPosted && <span className="absolute -top-1 -right-1 w-2 h-2 bg-accent rounded-full" />}
+        </button>
+      );
+    });
+
+    return [...blanks, ...cells];
+  }
+
   return (
     <div className="bg-dark-card rounded-2xl p-5 mb-4">
       <h3 className="text-lg font-bold mb-4">📅 Calendar</h3>
-      <div className="grid grid-cols-7 gap-2 mb-2">
-        {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (<div key={i} className="text-center text-xs text-muted font-semibold">{d}</div>))}
-      </div>
-      {(() => {
-        const startDow = parseDate(config.startDate).getDay();
-        const blanks = Array.from({ length: startDow }, (_, i) => (<div key={"b-" + i} />));
-        const cells = campaignDays.map((dateStr, idx) => {
-          const dayData = userData.days[dateStr] || { posted: false, link: "" };
-          const isToday = dateStr === today; const isPast = dateStr < today; const isFuture = dateStr > today;
-          const isPosted = dayData.posted; const dayNum = idx + 1;
-          let bgClass = "bg-dark-bg border-dark-bg";
-          if (isPosted) bgClass = "bg-success/20 border-success";
-          else if (isPast) bgClass = "bg-dark-bg border-muted/30";
-          else if (isFuture) bgClass = "bg-dark-bg border-dark-card";
-          return (
-            <button key={dateStr} onClick={() => onToggleDay(dateStr)} disabled={isFuture}
-              className={`day-cell relative flex flex-col items-center justify-center rounded-xl border-2 min-h-[48px] min-w-[48px] aspect-square ${bgClass} ${isToday ? "border-accent pulse-today" : ""} ${isPosted ? "text-success" : isPast ? "text-muted" : "text-white"} ${isFuture ? "opacity-40 cursor-not-allowed" : "cursor-pointer hover:border-accent/50"}`}>
-              <span className="text-xs font-bold leading-none">{dayNum}</span>
-              {isPosted && <span className="text-success text-[10px] leading-none mt-0.5">✓</span>}
-              {isToday && !isPosted && <span className="absolute -top-1 -right-1 w-2 h-2 bg-accent rounded-full" />}
-            </button>
-          );
-        });
-        return <div className="grid grid-cols-7 gap-2">{blanks}{cells}</div>;
-      })()}
+
+      {months.map((monthInfo) => (
+        <div key={monthInfo.key} className="mb-5 last:mb-0">
+          <h4 className="text-sm font-bold text-accent mb-3">{monthInfo.label}</h4>
+          <div className="grid grid-cols-7 gap-2 mb-2">
+            {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (<div key={i} className="text-center text-xs text-muted font-semibold">{d}</div>))}
+          </div>
+          <div className="grid grid-cols-7 gap-2">
+            {buildMonthGrid(monthInfo)}
+          </div>
+        </div>
+      ))}
+
       <div className="flex items-center gap-4 mt-4 text-xs text-muted">
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-success/20 border border-success inline-block" /> Posted</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-dark-bg border border-muted/30 inline-block" /> Missed</span>
