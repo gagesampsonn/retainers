@@ -18,6 +18,10 @@ const CAMPAIGN_CONFIG = {
   totalVideos: 15,
   startDate: "2026-03-25",
   endDate: "2026-04-24",
+  phase2Days: 15,
+  // If Phase 2 isn't selected for a creator, this is their effective end date.
+  // Set explicitly to avoid off-by-one issues when computing phase boundaries.
+  phase1EndDate: "2026-04-15",
   briefLink: "https://discord.com/channels/...",
   showcaseLink: "https://affiliate-us.tiktok.com/api/v1/share/AJK4Uc0dUuXO",
 };
@@ -29,7 +33,8 @@ const STORAGE_PREFIX = "retainers_";
 
 function storageGet(key) {
   try {
-    const val = window.storage.getItem(STORAGE_PREFIX + key);
+    const s = window.storage || window.localStorage;
+    const val = s.getItem(STORAGE_PREFIX + key);
     return val ? JSON.parse(val) : null;
   } catch {
     return null;
@@ -38,7 +43,12 @@ function storageGet(key) {
 
 function storageSet(key, value) {
   try {
-    window.storage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
+    const s = window.storage || window.localStorage;
+    if (value === null || typeof value === "undefined") {
+      s.removeItem(STORAGE_PREFIX + key);
+      return;
+    }
+    s.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
   } catch (e) {
     console.error("Storage write failed:", e);
   }
@@ -80,9 +90,29 @@ function formatDateISO(date) {
   return `${y}-${m}-${d}`;
 }
 
-function getCampaignDays(config) {
-  const start = parseDate(config.startDate);
-  const end = parseDate(config.endDate);
+function addDaysISO(iso, days) {
+  const d = parseDate(iso);
+  d.setDate(d.getDate() + days);
+  return formatDateISO(d);
+}
+
+function subtractDaysISO(iso, days) {
+  return addDaysISO(iso, -days);
+}
+
+function getPhase1EndISO(config) {
+  if (config.phase1EndDate) return config.phase1EndDate;
+  return subtractDaysISO(config.endDate, Math.max(0, Number(config.phase2Days || 0)));
+}
+
+function getEffectiveEndISO(config, userData) {
+  const phase2Selected = !!userData?.phase2Selected;
+  return phase2Selected ? config.endDate : getPhase1EndISO(config);
+}
+
+function getCampaignDaysFromTo(startISO, endISO) {
+  const start = parseDate(startISO);
+  const end = parseDate(endISO);
   const days = [];
   const current = new Date(start);
   while (current <= end) {
@@ -96,8 +126,8 @@ function getTodayISO() {
   return formatDateISO(new Date());
 }
 
-function getDaysRemaining(config) {
-  const end = parseDate(config.endDate);
+function getDaysRemainingTo(endISO) {
+  const end = parseDate(endISO);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const diff = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
@@ -124,13 +154,14 @@ function getCurrentStreak(campaignDays, daysData) {
 }
 
 function buildDefaultUserData(username, config) {
-  const campaignDays = getCampaignDays(config);
+  const campaignDays = getCampaignDaysFromTo(config.startDate, config.endDate);
   const days = {};
   campaignDays.forEach((date) => {
     days[date] = { posted: false, link: "" };
   });
   return {
     username,
+    phase2Selected: false,
     campaign: config.brandName.toLowerCase().replace(/\s+/g, "-"),
     rate: config.ratePerVideo,
     totalVideos: config.totalVideos,
@@ -202,7 +233,7 @@ function CampaignHeader({ config, userData, onSwitchUser }) {
   const pct = Math.round((posted / total) * 100);
   const earned = posted * config.ratePerVideo;
   const totalComp = total * config.ratePerVideo;
-  const remaining = getDaysRemaining(config);
+  const remaining = getDaysRemainingTo(getEffectiveEndISO(config, userData));
 
   return (
     <div className="bg-dark-card rounded-2xl p-5 mb-4">
@@ -501,7 +532,15 @@ function App() {
     setLoaded(true);
   }, []);
 
-  const campaignDays = useMemo(() => getCampaignDays(CAMPAIGN_CONFIG), []);
+  const effectiveEndISO = useMemo(
+    () => getEffectiveEndISO(CAMPAIGN_CONFIG, userData),
+    [userData]
+  );
+
+  const campaignDays = useMemo(
+    () => getCampaignDaysFromTo(CAMPAIGN_CONFIG.startDate, effectiveEndISO),
+    [effectiveEndISO]
+  );
 
   const handleLogin = (username) => {
     let data = loadUserData(username);

@@ -76,6 +76,10 @@ const CAMPAIGN_CONFIG = {
   totalVideos: 15,
   startDate: "2026-03-25",
   endDate: "2026-04-24",
+  phase2Days: 15,
+  // If Phase 2 isn't selected for a creator, this is their effective end date.
+  // Set explicitly to avoid off-by-one issues when computing phase boundaries.
+  phase1EndDate: "2026-04-15",
   briefLink: "https://discord.com/channels/...",
   showcaseLink: "https://affiliate-us.tiktok.com/api/v1/share/AJK4Uc0dUuXO",
 };
@@ -93,12 +97,34 @@ function setLastUser(u) { storageSet("last_user", u); }
 function parseDate(s) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); }
 function fmtShort(d) { return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }); }
 function fmtISO(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
-function getCampaignDays(c) { const s = parseDate(c.startDate), e = parseDate(c.endDate), d = [], cur = new Date(s); while(cur<=e){d.push(fmtISO(cur));cur.setDate(cur.getDate()+1);} return d; }
+function getCampaignDaysFromTo(startISO, endISO) { const s = parseDate(startISO), e = parseDate(endISO), d = [], cur = new Date(s); while(cur<=e){d.push(fmtISO(cur));cur.setDate(cur.getDate()+1);} return d; }
+function addDaysISO(iso, days) { const d = parseDate(iso); d.setDate(d.getDate() + days); return fmtISO(d); }
+function subtractDaysISO(iso, days) { return addDaysISO(iso, -days); }
+function getPhase1EndISO(cfg) { return cfg.phase1EndDate || subtractDaysISO(cfg.endDate, Math.max(0, Number(cfg.phase2Days || 0))); }
+function getEffectiveEndISO(cfg, userData) {
+  const phase2Selected = !!userData?.phase2Selected;
+  return phase2Selected ? cfg.endDate : getPhase1EndISO(cfg);
+}
 function todayISO() { return fmtISO(new Date()); }
-function daysLeft(c) { const e = parseDate(c.endDate), t = new Date(); t.setHours(0,0,0,0); return Math.max(0, Math.ceil((e-t)/(864e5))); }
+function daysLeftTo(endISO) { const e = parseDate(endISO), t = new Date(); t.setHours(0,0,0,0); return Math.max(0, Math.ceil((e-t)/(864e5))); }
 function postedCount(days) { return Object.values(days).filter(d => d.posted).length; }
 function streak(cDays, data) { let s = 0; const t = todayISO(); for(let i=cDays.length-1;i>=0;i--){if(cDays[i]>t)continue;if(data[cDays[i]]?.posted)s++;else break;} return s; }
-function buildUser(name, pin, cfg) { const cDays = getCampaignDays(cfg); const days = {}; cDays.forEach(d => { days[d] = { posted: false, link: "" }; }); return { username: name, pin, campaign: cfg.brandName.toLowerCase().replace(/\s+/g,"-"), rate: cfg.ratePerVideo, totalVideos: cfg.totalVideos, startDate: cfg.startDate, endDate: cfg.endDate, days }; }
+function buildUser(name, pin, cfg) {
+  const cDays = getCampaignDaysFromTo(cfg.startDate, cfg.endDate);
+  const days = {};
+  cDays.forEach(d => { days[d] = { posted: false, link: "" }; });
+  return {
+    username: name,
+    pin,
+    phase2Selected: false,
+    campaign: cfg.brandName.toLowerCase().replace(/\s+/g,"-"),
+    rate: cfg.ratePerVideo,
+    totalVideos: cfg.totalVideos,
+    startDate: cfg.startDate,
+    endDate: cfg.endDate,
+    days
+  };
+}
 function milestone(posted, total) { const p = (posted/total)*100; if(p>=100)return 100; if(p>=75)return 75; if(p>=50)return 50; if(p>=25)return 25; return 0; }
 
 // ── Icons (styled text, no SVG issues with Babel) ───────────
@@ -204,7 +230,8 @@ function LoginScreen({ onSubmit }) {
 function CampaignHeader({ config, userData, onSwitchUser }) {
   const posted = postedCount(userData.days), total = config.totalVideos;
   const pct = Math.round((posted/total)*100), earned = posted*config.ratePerVideo;
-  const totalComp = total*config.ratePerVideo, rem = daysLeft(config);
+  const totalComp = total*config.ratePerVideo;
+  const rem = daysLeftTo(getEffectiveEndISO(config, userData));
   return (
     <div className="bg-dark-card border border-dark-border rounded-lg p-4 mb-3">
       <div className="flex items-center justify-between mb-3">
@@ -359,7 +386,14 @@ function App() {
   const [isNew, setIsNew] = useState(false);
   const [celeb, setCeleb] = useState(null);
   const lastMs = useRef(0);
-  const cDays = useMemo(() => getCampaignDays(CAMPAIGN_CONFIG), []);
+  const effectiveEndISO = useMemo(
+    () => getEffectiveEndISO(CAMPAIGN_CONFIG, userData),
+    [userData]
+  );
+  const cDays = useMemo(
+    () => getCampaignDaysFromTo(CAMPAIGN_CONFIG.startDate, effectiveEndISO),
+    [effectiveEndISO]
+  );
 
   useEffect(() => {
     const lu = getLastUser();
